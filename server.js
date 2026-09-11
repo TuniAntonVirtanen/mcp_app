@@ -1,4 +1,3 @@
-// MCP Server setup (In your MCP Server file)
 import express from "express";
 import cors from "cors";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -7,66 +6,75 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 const app = express();
 app.set("trust proxy", 1);
 
-app.use(cors({
-  origin: "*",
-  exposedHeaders: ["WWW-Authenticate", "Mcp-Session-Id"]
-}));
+app.use(
+  cors({
+    origin: "*",
+    exposedHeaders: ["WWW-Authenticate", "Mcp-Session-Id"]
+  })
+);
+
+// Global request logger
+app.use((req, res, next) => {
+  console.log(`[MCP REQ] ${req.method} ${req.url}`);
+  next();
+});
 
 const AUTH_SERVER_URL = "https://customer-backend-stqk.onrender.com";
 const EXPECTED_TOKEN = "mock_access_token_9999";
 
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
-// Helper to instantiate server with tools
-function createMcpServer() {
-  const server = new McpServer({
-    name: "customer-mcp-middleman",
-    version: "1.0.0"
-  });
+// Instantiate MCP Server
+const mcpServer = new McpServer({
+  name: "customer-mcp-middleman",
+  version: "1.0.0"
+});
 
-  server.tool(
-    "get_customer_projects",
-    "Fetches project metrics from the authenticated Customer account.",
-    {},
-    async () => {
-      console.log(`[MCP TOOL EXECUTED] "get_customer_projects" invoked`);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
-          }
-        ]
-      };
-    }
-  );
-  return server;
-}
+mcpServer.tool(
+  "get_customer_projects",
+  "Fetches project metrics from the authenticated Customer account.",
+  {},
+  async () => {
+    console.log(`[MCP TOOL EXECUTED] "get_customer_projects" invoked`);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
+        }
+      ]
+    };
+  }
+);
 
-// Global transport instance for stream handling
+// Create streamable transport
 const transport = new StreamableHTTPServerTransport({
   sessionIdGenerator: () => "single-session"
 });
 
-// Connect transport once
-const mcpServer = createMcpServer();
 await mcpServer.connect(transport);
 
 // ---------------------------------------------------------------------------
-// DISCOVERY ENDPOINTS
+// OAUTH DISCOVERY ENDPOINTS (RFC 9728 Compliance)
 // ---------------------------------------------------------------------------
 
-app.get("/.well-known/oauth-protected-resource", (req, res) => {
+const sendProtectedResourceMetadata = (req, res) => {
   const host = getHostUrl(req);
+  console.log(`[MCP DISCOVERY] Serving protected-resource metadata to: ${req.url}`);
   res.json({
     resource: `${host}/mcp`,
     authorization_servers: [AUTH_SERVER_URL],
     scopes_supported: ["read", "write"],
     bearer_methods_supported: ["header"]
   });
-});
+};
+
+// ChatGPT checks BOTH root level and resource-specific subpath
+app.get("/.well-known/oauth-protected-resource", sendProtectedResourceMetadata);
+app.get("/.well-known/oauth-protected-resource/mcp", sendProtectedResourceMetadata);
 
 app.get("/.well-known/oauth-authorization-server", (req, res) => {
+  console.log(`[MCP DISCOVERY] Serving authorization-server metadata proxy`);
   res.json({
     issuer: AUTH_SERVER_URL,
     authorization_endpoint: `${AUTH_SERVER_URL}/oauth/authorize`,
@@ -79,43 +87,48 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
   });
 });
 
+// Alias for OpenID discovery probe
+app.get("/.well-known/openid-configuration", (req, res) => {
+  res.redirect("/.well-known/oauth-authorization-server");
+});
+
 // ---------------------------------------------------------------------------
-// MCP STREAM ENDPOINT
+// MCP ROUTE
 // ---------------------------------------------------------------------------
 
 app.post("/mcp", async (req, res) => {
-  console.log(`[MCP REQ] POST /mcp received`);
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
 
-  // 1. Return JSON-RPC-friendly 401 response if no token provided
+  console.log(`[MCP API] POST /mcp - Auth Present: ${!!authHeader}`);
+
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    console.warn(`[MCP API 401] Bearer token missing.`);
+    console.warn(`[MCP API 401] No Bearer token. Triggering OAuth metadata challenge.`);
     res.set(
       "WWW-Authenticate",
       `Bearer realm="mcp", resource_metadata="${host}/.well-known/oauth-protected-resource"`
     );
     return res.status(401).json({
       jsonrpc: "2.0",
-      error: { code: -32001, message: "Unauthorized: Missing Bearer Token" },
+      error: { code: -32001, message: "Authentication required." },
       id: null
     });
   }
 
-  // 2. Token validation
   const token = authHeader.split(" ")[1];
+  console.log(`[MCP API] Received Token: "${token}"`);
+
   if (token !== EXPECTED_TOKEN) {
-    console.warn(`[MCP API 403] Invalid Token: ${token}`);
+    console.warn(`[MCP API 403] Invalid Token.`);
     return res.status(403).json({ error: "invalid_token" });
   }
 
-  // 3. Delegate execution safely to MCP transport
   try {
     await transport.handleRequest(req, res);
   } catch (err) {
-    console.error("[MCP TRANSPORT ERROR]", err);
+    console.error(`[MCP TRANSPORT ERROR]`, err);
     if (!res.headersSent) {
-      res.status(500).json({ error: "mcp_transport_failed" });
+      res.status(500).json({ error: "transport_error" });
     }
   }
 });
