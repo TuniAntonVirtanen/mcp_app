@@ -119,12 +119,43 @@ app.post("/mcp", mcpAuthGate, async (req, res) => {
 });
 
 // LLM's post-auth discovery probe:
+// Handles ChatGPT's post-auth JSON-RPC action discovery probe
 app.post("/", (req, res) => {
+  const reqId = req.body?.id || 1;
+
+  // Check if it's asking for MCP initialization
+  if (req.body?.method === "initialize") {
+    return res.json({
+      jsonrpc: "2.0",
+      id: reqId,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: {
+          tools: {}
+        },
+        serverInfo: {
+          name: "screenful-mcp-middleman",
+          version: "1.0.0"
+        }
+      }
+    });
+  }
+
+  app.post("/oauth/register", (req, res) => {
+  res.json({
+    client_id: "chatgpt-mcp-client",
+    client_secret: "mock-secret-not-needed-for-pkce",
+    redirect_uris: req.body?.redirect_uris || ["https://chatgpt.com/connector/oauth/"]
+  });
+});
+
+  // For any other probe, send a compliant JSON-RPC response
   res.json({
     jsonrpc: "2.0",
-    id: req.body?.id || 1,
-    result: {
-      status: "ok"
+    id: reqId,
+    error: {
+      code: -32600,
+      message: "Invalid Request"
     }
   });
 });
