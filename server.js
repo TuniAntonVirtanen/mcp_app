@@ -30,8 +30,11 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
     issuer: AUTH_SERVER_URL,
     authorization_endpoint: `${AUTH_SERVER_URL}/oauth/authorize`,
     token_endpoint: `${AUTH_SERVER_URL}/oauth/token`,
+    registration_endpoint: `http://localhost:${process.env.PORT || 3000}/oauth/register`,
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code"]
+    grant_types_supported: ["authorization_code"],
+    // ADD THIS FIELD TO SATISFY THE MCP PKCE SECURITY SPEC:
+    code_challenge_methods_supported: ["S256"]
   });
 });
 
