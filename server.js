@@ -117,6 +117,20 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
+
+app.get("/mcp", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ") || authHeader.split(" ")[1] !== EXPECTED_TOKEN) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  // Stateless mode doesn't support server push — return 405 per MCP spec
+  res.status(405).json({ error: "method_not_allowed" });
+});
+
+app.delete("/mcp", async (req, res) => {
+  res.status(200).end();
+});
+
 // ---------------------------------------------------------------------------
 // 3. BACKWARD COMPATIBILITY / INITIALIZE PROBE
 // ---------------------------------------------------------------------------
