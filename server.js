@@ -60,24 +60,24 @@ console.log("[MCP SETUP] Transport connected successfully.");
 
 app.get("/.well-known/oauth-protected-resource", (req, res) => {
   const host = getHostUrl(req);
-  console.log(`[MCP DISCOVERY] /oauth-protected-resource fetched. Host: ${host}`);
   res.json({
     resource: `${host}/mcp`,
     authorization_servers: [AUTH_SERVER_URL],
-    scopes_supported: ["read", "write"]
+    scopes_supported: ["read", "write"],
+    bearer_methods_supported: ["header"]
   });
 });
 
 app.get("/.well-known/oauth-authorization-server", (req, res) => {
-  const host = getHostUrl(req);
-  console.log(`[MCP DISCOVERY] /oauth-authorization-server fetched. Proxying endpoints for: ${AUTH_SERVER_URL}`);
   res.json({
     issuer: AUTH_SERVER_URL,
     authorization_endpoint: `${AUTH_SERVER_URL}/oauth/authorize`,
     token_endpoint: `${AUTH_SERVER_URL}/oauth/token`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code"],
-    code_challenge_methods_supported: ["S256"]
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
+    scopes_supported: ["read", "write"]
   });
 });
 
@@ -100,29 +100,26 @@ app.post("/mcp", async (req, res) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
 
-  console.log(`[MCP API] Request to /mcp. Auth header present: ${!!authHeader}`);
-
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    console.warn(`[MCP API 401] Missing or malformed Bearer token. Sending WWW-Authenticate header.`);
+    console.warn("[MCP API 401] Missing Bearer Token");
     res.set(
       "WWW-Authenticate",
-      `Bearer realm="mcp", resource_metadata="${host}/.well-known/oauth-protected-resource"`
+      `Bearer realm="mcp", error="invalid_token", resource_metadata="${host}/.well-known/oauth-protected-resource"`
     );
     return res.status(401).json({
-      error: "unauthorized",
-      error_description: "Authentication required."
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Unauthorized" },
+      id: null
     });
   }
 
   const token = authHeader.split(" ")[1];
-  console.log(`[MCP API] Extracted token: "${token}"`);
-
   if (token !== EXPECTED_TOKEN) {
-    console.warn(`[MCP API 403] Token mismatch. Expected: "${EXPECTED_TOKEN}", Received: "${token}"`);
+    console.warn(`[MCP API 403] Invalid Token: ${token}`);
     return res.status(403).json({ error: "invalid_token" });
   }
 
-  console.log(`[MCP API SUCCESS] Token valid. Passing request to MCP Transport.`);
+  // Handle request using MCP HTTP Transport
   await transport.handleRequest(req, res);
 });
 
