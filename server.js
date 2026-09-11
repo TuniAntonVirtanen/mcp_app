@@ -13,6 +13,8 @@ app.use(
   })
 );
 
+app.use(express.json());
+
 // Global request logger
 app.use((req, res, next) => {
   console.log(`[MCP REQ] ${req.method} ${req.url}`);
@@ -25,34 +27,31 @@ const EXPECTED_TOKEN = "mock_access_token_9999";
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
 // Instantiate MCP Server
-const mcpServer = new McpServer({
-  name: "customer-mcp-middleman",
-  version: "1.0.0"
-});
+const createMcpServer = () => {
+  const server = new McpServer({
+    name: "customer-mcp-middleman",
+    version: "1.0.0"
+  });
 
-mcpServer.tool(
-  "get_customer_projects",
-  "Fetches project metrics from the authenticated Customer account.",
-  {},
-  async () => {
-    console.log(`[MCP TOOL EXECUTED] "get_customer_projects" invoked`);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
-        }
-      ]
-    };
-  }
-);
+  server.tool(
+    "get_customer_projects",
+    "Fetches project metrics from the authenticated Customer account.",
+    {},
+    async () => {
+      console.log(`[MCP TOOL EXECUTED] "get_customer_projects" invoked`);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
+          }
+        ]
+      };
+    }
+  );
 
-// Create streamable transport
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: () => "single-session"
-});
-
-await mcpServer.connect(transport);
+  return server;
+};
 
 // ---------------------------------------------------------------------------
 // OAUTH DISCOVERY ENDPOINTS (RFC 9728 Compliance)
@@ -69,7 +68,6 @@ const sendProtectedResourceMetadata = (req, res) => {
   });
 };
 
-// ChatGPT checks BOTH root level and resource-specific subpath
 app.get("/.well-known/oauth-protected-resource", sendProtectedResourceMetadata);
 app.get("/.well-known/oauth-protected-resource/mcp", sendProtectedResourceMetadata);
 
@@ -87,7 +85,6 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
   });
 });
 
-// Alias for OpenID discovery probe
 app.get("/.well-known/openid-configuration", (req, res) => {
   res.redirect("/.well-known/oauth-authorization-server");
 });
@@ -124,6 +121,9 @@ app.post("/mcp", async (req, res) => {
   }
 
   try {
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport();
+    await server.connect(transport);
     await transport.handleRequest(req, res);
   } catch (err) {
     console.error(`[MCP TRANSPORT ERROR]`, err);
