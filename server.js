@@ -93,7 +93,7 @@ app.get("/.well-known/openid-configuration", (req, res) => {
 // MCP ROUTE
 // ---------------------------------------------------------------------------
 
-app.post("/mcp", async (req, res) => {
+app.post(["/", "/mcp"], async (req, res) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
 
@@ -133,11 +133,11 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
-app.get("/mcp", async (req, res) => {
+app.get(["/", "/mcp"], async (req, res) => {
   res.status(405).json({ error: "method_not_allowed" });
 });
 
-app.delete("/mcp", async (req, res) => {
+app.delete(["/", "/mcp"], async (req, res) => {
   res.status(200).end();
 });
 
