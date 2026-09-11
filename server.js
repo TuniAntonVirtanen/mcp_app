@@ -6,24 +6,48 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 const app = express();
 app.set("trust proxy", 1);
 
-// Enable CORS for all incoming ChatGPT origins
 app.use(cors({
   origin: "*",
   exposedHeaders: ["WWW-Authenticate", "Mcp-Session-Id"]
 }));
 
-// Apply JSON body parser ONLY to routes that need it, 
-// leaving /mcp raw for StreamableHTTPServerTransport!
 const jsonParser = express.json();
-const urlEncodedParser = express.urlencoded({ extended: true });
 
 const AUTH_SERVER_URL = "https://customer-backend-stqk.onrender.com";
 const EXPECTED_TOKEN = "mock_access_token_9999";
 
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
+// 1. Initialize MCP Server globally
+const mcpServer = new McpServer({
+  name: "customer-mcp-middleman",
+  version: "1.0.0"
+});
+
+mcpServer.tool(
+  "get_customer_projects",
+  "Fetches project metrics from the authenticated Customer account.",
+  {},
+  async () => ({
+    content: [
+      {
+        type: "text",
+        text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
+      }
+    ]
+  })
+);
+
+// 2. Setup Persistent Transport Handler
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: () => "single-session"
+});
+
+// Connect transport once on startup
+await mcpServer.connect(transport);
+
 // ---------------------------------------------------------------------------
-// 1. OAUTH DISCOVERY ENDPOINTS
+// OAUTH DISCOVERY ENDPOINTS
 // ---------------------------------------------------------------------------
 
 app.get("/.well-known/oauth-protected-resource", (req, res) => {
@@ -57,14 +81,13 @@ app.post("/oauth/register", jsonParser, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. MCP ROUTE (Raw Stream Handling - No body-parser middleware here)
+// MCP ROUTE (Streamable Transport Endpoint)
 // ---------------------------------------------------------------------------
 
 app.post("/mcp", async (req, res) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
 
-  // Auth Verification
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     res.set(
       "WWW-Authenticate",
@@ -81,74 +104,16 @@ app.post("/mcp", async (req, res) => {
     return res.status(403).json({ error: "invalid_token" });
   }
 
-  // Create MCP Instance per request or session
-  const server = new McpServer({
-    name: "customer-mcp-middleman",
-    version: "1.0.0"
-  });
-
-  server.tool(
-    "get_customer_projects",
-    "Fetches project metrics from the authenticated Customer account.",
-    {},
-    async () => ({
-      content: [
-        {
-          type: "text",
-          text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
-        }
-      ]
-    })
-  );
-
-  try {
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined
-    });
-    
-    await server.connect(transport);
-    // Pass raw req/res directly into transport handler
-    await transport.handleRequest(req, res);
-  } catch (err) {
-    console.error("MCP Transport Error:", err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Internal MCP Transport Error" });
-    }
-  }
+  // Handle request using established transport instance
+  await transport.handleRequest(req, res);
 });
 
-
 app.get("/mcp", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ") || authHeader.split(" ")[1] !== EXPECTED_TOKEN) {
-    return res.status(401).json({ error: "unauthorized" });
-  }
-  // Stateless mode doesn't support server push — return 405 per MCP spec
   res.status(405).json({ error: "method_not_allowed" });
 });
 
 app.delete("/mcp", async (req, res) => {
   res.status(200).end();
-});
-
-// ---------------------------------------------------------------------------
-// 3. BACKWARD COMPATIBILITY / INITIALIZE PROBE
-// ---------------------------------------------------------------------------
-
-app.post("/", jsonParser, (req, res) => {
-  const reqId = req.body?.id || 1;
-  if (req.body?.method === "initialize") {
-    return res.json({
-      jsonrpc: "2.0",
-      id: reqId,
-      result: {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
-        serverInfo: { name: "customer-mcp-middleman", version: "1.0.0" }
-      }
-    });
-  }
-  res.json({ jsonrpc: "2.0", id: reqId, error: { code: -32600, message: "Invalid Request" } });
 });
 
 const port = process.env.PORT || 3000;
