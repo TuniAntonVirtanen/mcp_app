@@ -118,6 +118,17 @@ app.post("/mcp", mcpAuthGate, async (req, res) => {
   }
 });
 
+// LLM's post-auth discovery probe:
+app.post("/", (req, res) => {
+  res.json({
+    jsonrpc: "2.0",
+    id: req.body?.id || 1,
+    result: {
+      status: "ok"
+    }
+  });
+});
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`MCP App listening on http://localhost:${port}`);
