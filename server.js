@@ -1,3 +1,4 @@
+// MCP Server setup (In your MCP Server file)
 import express from "express";
 import cors from "cors";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,51 +12,48 @@ app.use(cors({
   exposedHeaders: ["WWW-Authenticate", "Mcp-Session-Id"]
 }));
 
-// Request Logger
-app.use((req, res, next) => {
-  console.log(`[MCP REQ] ${req.method} ${req.url}`);
-  next();
-});
-
-const jsonParser = express.json();
-
 const AUTH_SERVER_URL = "https://customer-backend-stqk.onrender.com";
 const EXPECTED_TOKEN = "mock_access_token_9999";
 
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
-const mcpServer = new McpServer({
-  name: "customer-mcp-middleman",
-  version: "1.0.0"
-});
+// Helper to instantiate server with tools
+function createMcpServer() {
+  const server = new McpServer({
+    name: "customer-mcp-middleman",
+    version: "1.0.0"
+  });
 
-mcpServer.tool(
-  "get_customer_projects",
-  "Fetches project metrics from the authenticated Customer account.",
-  {},
-  async () => {
-    console.log(`[MCP TOOL EXECUTED] "get_customer_projects" invoked`);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
-        }
-      ]
-    };
-  }
-);
+  server.tool(
+    "get_customer_projects",
+    "Fetches project metrics from the authenticated Customer account.",
+    {},
+    async () => {
+      console.log(`[MCP TOOL EXECUTED] "get_customer_projects" invoked`);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
+          }
+        ]
+      };
+    }
+  );
+  return server;
+}
 
+// Global transport instance for stream handling
 const transport = new StreamableHTTPServerTransport({
   sessionIdGenerator: () => "single-session"
 });
 
-console.log("[MCP SETUP] Connecting transport...");
+// Connect transport once
+const mcpServer = createMcpServer();
 await mcpServer.connect(transport);
-console.log("[MCP SETUP] Transport connected successfully.");
 
 // ---------------------------------------------------------------------------
-// OAUTH DISCOVERY ENDPOINTS
+// DISCOVERY ENDPOINTS
 // ---------------------------------------------------------------------------
 
 app.get("/.well-known/oauth-protected-resource", (req, res) => {
@@ -81,55 +79,52 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
   });
 });
 
-app.post("/oauth/register", jsonParser, (req, res) => {
-  console.log(`[MCP OAUTH REGISTER] Client registration request:`, req.body);
-  const responsePayload = {
-    client_id: "chatgpt-mcp-client",
-    client_secret: "mock-secret-not-needed-for-pkce",
-    redirect_uris: req.body?.redirect_uris || ["https://chatgpt.com/connector/oauth/"]
-  };
-  console.log(`[MCP OAUTH REGISTER] Responding with:`, responsePayload);
-  res.json(responsePayload);
-});
-
 // ---------------------------------------------------------------------------
-// MCP ROUTE (Streamable Transport Endpoint)
+// MCP STREAM ENDPOINT
 // ---------------------------------------------------------------------------
 
 app.post("/mcp", async (req, res) => {
+  console.log(`[MCP REQ] POST /mcp received`);
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
 
+  // 1. Return JSON-RPC-friendly 401 response if no token provided
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    console.warn("[MCP API 401] Missing Bearer Token");
+    console.warn(`[MCP API 401] Bearer token missing.`);
     res.set(
       "WWW-Authenticate",
-      `Bearer realm="mcp", error="invalid_token", resource_metadata="${host}/.well-known/oauth-protected-resource"`
+      `Bearer realm="mcp", resource_metadata="${host}/.well-known/oauth-protected-resource"`
     );
     return res.status(401).json({
       jsonrpc: "2.0",
-      error: { code: -32001, message: "Unauthorized" },
+      error: { code: -32001, message: "Unauthorized: Missing Bearer Token" },
       id: null
     });
   }
 
+  // 2. Token validation
   const token = authHeader.split(" ")[1];
   if (token !== EXPECTED_TOKEN) {
     console.warn(`[MCP API 403] Invalid Token: ${token}`);
     return res.status(403).json({ error: "invalid_token" });
   }
 
-  // Handle request using MCP HTTP Transport
-  await transport.handleRequest(req, res);
+  // 3. Delegate execution safely to MCP transport
+  try {
+    await transport.handleRequest(req, res);
+  } catch (err) {
+    console.error("[MCP TRANSPORT ERROR]", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "mcp_transport_failed" });
+    }
+  }
 });
 
 app.get("/mcp", async (req, res) => {
-  console.warn(`[MCP API] GET /mcp received (Not Allowed)`);
   res.status(405).json({ error: "method_not_allowed" });
 });
 
 app.delete("/mcp", async (req, res) => {
-  console.log(`[MCP API] DELETE /mcp session teardown received.`);
   res.status(200).end();
 });
 
