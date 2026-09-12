@@ -142,21 +142,24 @@ function createMcpServer(authToken) {
 
   server.tool(
     "get_workspace2_widget",
-    "Renders an external hosted widget for Workspace 2.",
+    "Fetches the chart image for Workspace 2.",
     {},
     async () => {
       try {
-        const widgetUrl = `${CUSTOMER_BACKEND_URL}/widget/bar-chart`;
-        // QuickChart generates an actual rendered PNG image on the fly for hosts that block iframes
-        const chartImageUrl = `https://quickchart.io/chart?c={type:'bar',data:{labels:['A','B','C'],datasets:[{label:'Metrics',data:[5,7,3]}]}}`;
+        // Direct URL to static/rendered image hosted on your backend
+        const imageUrl = `${CUSTOMER_BACKEND_URL}/api/v1/charts/workspace2.png`;
+        const dashboardUrl = `${CUSTOMER_BACKEND_URL}/dashboard/workspace2`;
 
         return {
           content: [
             {
+              type: "image",
+              data: await fetchImageAsBase64(imageUrl), // Or return standard markdown image link
+              mimeType: "image/png"
+            },
+            {
               type: "text",
-              text: `Here is the visual chart widget for Workspace 2:\n\n` +
-                    `![Workspace 2 Bar Chart](${chartImageUrl})\n\n` +
-                    `🔗 [Open Live Interactive Widget Dashboard](${widgetUrl})`
+              text: `[Open Interactive Workspace 2 Dashboard](${dashboardUrl})`
             }
           ]
         };
