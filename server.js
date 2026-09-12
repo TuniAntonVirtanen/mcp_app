@@ -147,33 +147,36 @@ function createMcpServer(authToken) {
   );
 
   server.tool(
-    "get_workspace2_widget",
-    "Fetches the chart image for Workspace 2.",
-    {},
-    async () => {
-      try {
-        // Direct URL to static/rendered image hosted on your backend
-        const imageUrl = `${CUSTOMER_BACKEND_URL}/api/v1/charts/workspace2.png`;
-        const dashboardUrl = `${CUSTOMER_BACKEND_URL}/dashboard/workspace2`;
+      "get_workspace2_widget",
+      "Fetches the chart image for Workspace 2.",
+      {},
+      async () => {
+        try {
+          // Fetch a dynamically generated chart image from QuickChart
+          const chartImageUrl = `https://quickchart.io/chart?c={type:'bar',data:{labels:['A','B','C'],datasets:[{label:'Metrics',data:[5,7,3]}]}}`;
+          const base64Data = await fetchImageAsBase64(chartImageUrl);
 
-        return {
-          content: [
-            {
-              type: "image",
-              data: await fetchImageAsBase64(imageUrl), // Or return standard markdown image link
-              mimeType: "image/png"
-            },
-            {
-              type: "text",
-              text: `[Open Interactive Workspace 2 Dashboard](${dashboardUrl})`
-            }
-          ]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
+          const dashboardUrl = `${CUSTOMER_BACKEND_URL}/widget/bar-chart`;
+
+          return {
+            content: [
+              {
+                type: "image",
+                data: base64Data,
+                mimeType: "image/png"
+              },
+              {
+                type: "text",
+                text: `[Open Interactive Workspace 2 Dashboard](${dashboardUrl})`
+              }
+            ]
+          };
+        } catch (err) {
+          console.error("[MCP APP WIDGET ERROR]", err.message);
+          return { isError: true, content: [{ type: "text", text: `Widget fetch failed: ${err.message}` }] };
+        }
       }
-    }
-  );
+    );
 
   // -------------------------------------------------------------------------
   // WORKSPACE 3 TOOLS
