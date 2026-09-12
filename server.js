@@ -21,7 +21,7 @@ app.use((req, res, next) => {
 
 // Environment Configuration
 const CUSTOMER_BACKEND_URL = process.env.CUSTOMER_BACKEND_URL || "https://customer-backend-stqk.onrender.com";
-const MCP_BACKEND_URL = process.env.MCP_BACKEND_URL || "https://mcp-backend-service.onrender.com";
+const MCP_BACKEND_URL = process.env.MCP_BACKEND_URL || "https://prototype-mcp-backend.onrender.com";
 
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
