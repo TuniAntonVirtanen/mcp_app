@@ -112,9 +112,6 @@ app.use("/mcp", validateAuth, async (req, res) => {
   await transport.handleRequest(req, res);
 });
 
-app.use("/", validateAuth, async (req, res) => {
-  await transport.handleRequest(req, res);
-});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`MCP App listening on port ${port}`));
