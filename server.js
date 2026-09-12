@@ -13,21 +13,16 @@ app.use(
   })
 );
 
-// Logging
 app.use((req, res, next) => {
   console.log(`[MCP APP REQ] ${req.method} ${req.url}`);
   next();
 });
 
-// Environment Configuration
 const CUSTOMER_BACKEND_URL = process.env.CUSTOMER_BACKEND_URL || "https://customer-backend-stqk.onrender.com";
 const MCP_BACKEND_URL = process.env.MCP_BACKEND_URL || "https://prototype-mcp-backend.onrender.com";
 
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
-// ---------------------------------------------------------------------------
-// AUTHENTICATION GUARD
-// ---------------------------------------------------------------------------
 const validateAuthHeader = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
@@ -46,22 +41,19 @@ const validateAuthHeader = (req, res, next) => {
   next();
 };
 
-// ---------------------------------------------------------------------------
-// MCP SERVER FACTORY (Stateless transport delegation)
-// ---------------------------------------------------------------------------
 function createMcpServer(authToken) {
   const server = new McpServer({
     name: "customer-mcp-app",
     version: "2.0.0"
   });
 
+  // Single tool returning Workspace 1 metrics
   server.tool(
-    "get_customer_projects",
-    "Fetches project metrics from the authenticated Customer account via MCP Backend.",
+    "get_data",
+    "Fetches workspace 1 sprint metrics from the customer account.",
     {},
     async () => {
       try {
-        // Delegate actual logic and downstream calls to MCP Backend
         const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
           headers: { Authorization: authToken }
         });
@@ -70,12 +62,19 @@ function createMcpServer(authToken) {
           throw new Error(`MCP Backend returned status ${response.status}`);
         }
 
-        const data = await response.json();
+        const result = await response.json();
+        const ws1 = result.data.workspace1;
+
         return {
-          content: [{ type: "text", text: data.summary }]
+          content: [
+            {
+              type: "text",
+              text: `Active Sprint: ${ws1.completedTasks} completed tasks, ${ws1.inProgressTasks} in progress`
+            }
+          ]
         };
       } catch (err) {
-        console.error("[MCP APP] Failed to query MCP Backend:", err.message);
+        console.error("[MCP APP] Error querying MCP Backend:", err.message);
         return {
           isError: true,
           content: [{ type: "text", text: `Error processing request: ${err.message}` }]
@@ -87,10 +86,6 @@ function createMcpServer(authToken) {
   return server;
 }
 
-// ---------------------------------------------------------------------------
-// OAUTH DISCOVERY ENDPOINTS
-// Pointing authorization directly to Customer Backend
-// ---------------------------------------------------------------------------
 const sendProtectedResourceMetadata = (req, res) => {
   const host = getHostUrl(req);
   res.json({
@@ -121,9 +116,6 @@ app.get("/.well-known/openid-configuration", (req, res) => {
   res.redirect("/.well-known/oauth-authorization-server");
 });
 
-// ---------------------------------------------------------------------------
-// ROUTE ROUTER
-// ---------------------------------------------------------------------------
 app.use("/mcp", express.json(), validateAuthHeader, async (req, res) => {
   try {
     const authToken = req.headers.authorization;
