@@ -23,6 +23,7 @@ const MCP_BACKEND_URL = process.env.MCP_BACKEND_URL || "https://prototype-mcp-ba
 
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
+// Standard MCP Protected Resource Challenge Handler
 const validateAuthHeader = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
@@ -41,14 +42,12 @@ const validateAuthHeader = (req, res, next) => {
   next();
 };
 
-
 function createMcpServer(authToken) {
   const server = new McpServer({
     name: "customer-mcp-app",
     version: "2.0.0"
   });
 
-  // Helper fetcher
   const fetchCustomerData = async () => {
     const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
       headers: { Authorization: authToken }
@@ -58,9 +57,6 @@ function createMcpServer(authToken) {
     return result.data;
   };
 
-  // -------------------------------------------------------------------------
-  // WORKSPACE 1 TOOLS
-  // -------------------------------------------------------------------------
   server.tool(
     "get_workspace1",
     "Fetches workspace 1 sprint metrics from the customer account.",
@@ -69,7 +65,6 @@ function createMcpServer(authToken) {
       try {
         const data = await fetchCustomerData();
         const ws1 = data.workspace1;
-
         return {
           content: [
             {
@@ -77,29 +72,6 @@ function createMcpServer(authToken) {
               text: `Active Sprint: ${ws1.completedTasks} completed tasks, ${ws1.inProgressTasks} in progress`
             }
           ]
-        };
-      } catch (err) {
-        console.error("[MCP APP] Error querying MCP Backend:", err.message);
-        return {
-          isError: true,
-          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
-        };
-      }
-    }
-  );
-
-  // -------------------------------------------------------------------------
-  // WORKSPACE 2 TOOLS
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace2_raw",
-    "Fetches raw key-value pair metrics for Workspace 2.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        return {
-          content: [{ type: "text", text: JSON.stringify({ metrics: data.workspace2 }) }]
         };
       } catch (err) {
         return { isError: true, content: [{ type: "text", text: err.message }] };
@@ -113,7 +85,7 @@ function createMcpServer(authToken) {
     {},
     async () => {
       try {
-        const data = await fetchCustomerData(); // { A: 5, B: 7, C: 3 }
+        const data = await fetchCustomerData();
         const labels = Object.keys(data.workspace2).map(k => `"${k}"`).join(", ");
         const values = Object.values(data.workspace2).join(", ");
 
@@ -123,8 +95,7 @@ function createMcpServer(authToken) {
               type: "text",
               text: `Data: ${JSON.stringify(data.workspace2)}\n\n` +
                     `CRITICAL VISUALIZATION INSTRUCTION:\n` +
-                    `Do NOT output ASCII text or bullet points.\n` +
-                    `You MUST output a syntactically valid Mermaid.js xychart block so the UI renders an actual graphical plot card:\n\n` +
+                    `You MUST output a syntactically valid Mermaid.js xychart block:\n\n` +
                     `\`\`\`mermaid\n` +
                     `xychart-beta\n` +
                     `    title "Workspace 2 Metrics"\n` +
@@ -141,74 +112,10 @@ function createMcpServer(authToken) {
     }
   );
 
-  // -------------------------------------------------------------------------
-  // WORKSPACE 3 TOOLS
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace3_raw",
-    "Fetches raw edge-pair transitions representing a graph from Workspace 3.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        const rawEdges = data.workspace3; // [["D","A"], ["A","C"], ...]
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ edges: rawEdges })
-            }
-          ]
-        };
-      } catch (err) {
-        console.error("[MCP APP] Error fetching raw edges:", err.message);
-        return {
-          isError: true,
-          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
-        };
-      }
-    }
-  );
-
-  server.tool(
-    "get_workspace3_formatted",
-    "Requests a rendered flow/transition graph diagram for Workspace 3.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        const edges = data.workspace3; // [["D","A"], ["A","C"], ["B","C"], ["D","C"]]
-
-        // Dynamically map edge pairs to Mermaid syntax: "    D --> A\n    A --> C"
-        const mermaidEdges = edges
-          .map(([from, to]) => `    ${from} --> ${to}`)
-          .join("\n");
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Data Edges: ${JSON.stringify(edges)}\n\n` +
-                    `CRITICAL VISUALIZATION INSTRUCTION:\n` +
-                    `Do NOT output plain text lists.\n` +
-                    `You MUST output a syntactically complete Mermaid.js graph code block so the UI renders a graphical diagram card:\n\n` +
-                    `\`\`\`mermaid\n` +
-                    `graph LR\n` +
-                    `${mermaidEdges}\n` +
-                    `\`\`\``
-            }
-          ]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
-      }
-    }
-  );
-
   return server;
 }
 
+// Protected Resource Metadata (RFC 9207 / MCP Discovery)
 const sendProtectedResourceMetadata = (req, res) => {
   const host = getHostUrl(req);
   res.json({
@@ -221,23 +128,6 @@ const sendProtectedResourceMetadata = (req, res) => {
 
 app.get("/.well-known/oauth-protected-resource", sendProtectedResourceMetadata);
 app.get("/.well-known/oauth-protected-resource/mcp", sendProtectedResourceMetadata);
-
-app.get("/.well-known/oauth-authorization-server", (req, res) => {
-  res.json({
-    issuer: CUSTOMER_BACKEND_URL,
-    authorization_endpoint: `${CUSTOMER_BACKEND_URL}/oauth/authorize`,
-    token_endpoint: `${CUSTOMER_BACKEND_URL}/oauth/token`,
-    response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
-    scopes_supported: ["read", "write"]
-  });
-});
-
-app.get("/.well-known/openid-configuration", (req, res) => {
-  res.redirect("/.well-known/oauth-authorization-server");
-});
 
 app.use("/mcp", express.json(), validateAuthHeader, async (req, res) => {
   try {
@@ -255,11 +145,10 @@ app.use("/mcp", express.json(), validateAuthHeader, async (req, res) => {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
-    console.error("[MCP APP] Error during protocol handling:", err);
+    console.error("[MCP APP] Error handling protocol request:", err);
     if (!res.headersSent) res.status(500).json({ error: "internal_error" });
   }
 });
-
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`MCP App running on port ${port}`));
