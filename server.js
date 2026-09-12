@@ -63,7 +63,7 @@ const fetchCustomerData = async () => {
   return result.data;
 };
 
-// Application-scoped MCP server instance
+// Application-scoped single MCP server instance
 const server = new McpServer({
   name: "customer-mcp-app",
   version: "2.0.0"
@@ -216,13 +216,6 @@ server.tool(
   }
 );
 
-// Bind MCP HTTP Transport globally
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: undefined
-});
-
-await server.connect(transport);
-
 const sendProtectedResourceMetadata = (req, res) => {
   const host = getHostUrl(req);
   res.json({
@@ -240,7 +233,19 @@ app.use("/mcp", express.json(), validateAuthHeader, async (req, res) => {
   try {
     const authToken = req.headers.authorization;
 
-    // Execute the request inside an AsyncLocalStorage context so tool calls can access authToken
+    // Create a new transport instance for this HTTP request lifecycle
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined
+    });
+
+    res.on("close", () => {
+      transport.close();
+    });
+
+    // Connect the single server instance to the new per-request transport
+    await server.connect(transport);
+
+    // Execute request inside AsyncLocalStorage to pass bearer token to tools
     await requestContext.run({ authToken }, async () => {
       await transport.handleRequest(req, res, req.body);
     });
