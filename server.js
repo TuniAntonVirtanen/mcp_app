@@ -43,7 +43,9 @@ mcpServer.tool(
   })
 );
 
-const transport = new StreamableHTTPServerTransport();
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: undefined // stateless mode: no session tracking needed
+});
 await mcpServer.connect(transport);
 
 // Middleware to validate Auth Header
@@ -112,10 +114,14 @@ app.get("/.well-known/openid-configuration", (req, res) => {
 // MCP PROTOCOL ROUTE
 // ---------------------------------------------------------------------------
 // Allow express.json() ONLY on non-MCP routes, or bypass it for transport
-app.use("/mcp", validateAuth, async (req, res) => {
+app.use("/mcp", express.json(), validateAuth, async (req, res) => {
   console.log("[MCP] Authorization header:", req.headers.authorization);
-  await transport.handleRequest(req, res);
-  console.log("[MCP] responded with status", res.statusCode);
+  try {
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    console.error("[MCP] handleRequest threw:", err);
+    if (!res.headersSent) res.status(500).json({ error: "internal_error" });
+  }
 });
 
 
