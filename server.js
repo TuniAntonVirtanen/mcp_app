@@ -41,11 +41,6 @@ const validateAuthHeader = (req, res, next) => {
   next();
 };
 
-async function fetchImageAsBase64(url) {
-  const response = await fetch(url);
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer).toString("base64");
-}
 
 function createMcpServer(authToken) {
   const server = new McpServer({
@@ -145,38 +140,6 @@ function createMcpServer(authToken) {
       }
     }
   );
-
-  server.tool(
-      "get_workspace2_widget",
-      "Fetches the chart image for Workspace 2.",
-      {},
-      async () => {
-        try {
-          // Fetch a dynamically generated chart image from QuickChart
-          const chartImageUrl = `https://quickchart.io/chart?c={type:'bar',data:{labels:['A','B','C'],datasets:[{label:'Metrics',data:[5,7,3]}]}}`;
-          const base64Data = await fetchImageAsBase64(chartImageUrl);
-
-          const dashboardUrl = `${CUSTOMER_BACKEND_URL}/widget/bar-chart`;
-
-          return {
-            content: [
-              {
-                type: "image",
-                data: base64Data,
-                mimeType: "image/png"
-              },
-              {
-                type: "text",
-                text: `[Open Interactive Workspace 2 Dashboard](${dashboardUrl})`
-              }
-            ]
-          };
-        } catch (err) {
-          console.error("[MCP APP WIDGET ERROR]", err.message);
-          return { isError: true, content: [{ type: "text", text: `Widget fetch failed: ${err.message}` }] };
-        }
-      }
-    );
 
   // -------------------------------------------------------------------------
   // WORKSPACE 3 TOOLS
