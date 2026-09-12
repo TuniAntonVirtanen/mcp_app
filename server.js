@@ -109,7 +109,9 @@ app.get("/.well-known/openid-configuration", (req, res) => {
 // ---------------------------------------------------------------------------
 // Allow express.json() ONLY on non-MCP routes, or bypass it for transport
 app.use("/mcp", validateAuth, async (req, res) => {
+  console.log("[MCP] Authorization header:", req.headers.authorization);
   await transport.handleRequest(req, res);
+  console.log("[MCP] responded with status", res.statusCode);
 });
 
 
