@@ -47,117 +47,119 @@ function createMcpServer(authToken) {
     version: "2.0.0"
   });
 
-  // -------------------------------------------------------------------------
-  // Workspace 1 Tool
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace1",
-    "Fetches workspace 1 sprint metrics from the customer account.",
-    {},
-    async () => {
-      try {
-        const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
-          headers: { Authorization: authToken }
-        });
-
-        if (!response.ok) {
-          throw new Error(`MCP Backend returned status ${response.status}`);
-        }
-
-        const result = await response.json();
-        const ws1 = result.data.workspace1;
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Active Sprint: ${ws1.completedTasks} completed tasks, ${ws1.inProgressTasks} in progress`
-            }
-          ]
-        };
-      } catch (err) {
-        console.error("[MCP APP] Error querying MCP Backend:", err.message);
-        return {
-          isError: true,
-          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
-        };
-      }
-    }
-  );
+  // Helper fetcher
+  const fetchCustomerData = async () => {
+    const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
+      headers: { Authorization: authToken }
+    });
+    if (!response.ok) throw new Error(`MCP Backend status ${response.status}`);
+    const result = await response.json();
+    return result.data;
+  };
 
   // -------------------------------------------------------------------------
-  // Workspace 3 Tool - RAW
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace3_raw",
-    "Fetches the raw transition sequence array from Workspace 3.",
-    {},
-    async () => {
-      try {
-        const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
-          headers: { Authorization: authToken }
-        });
-
-        if (!response.ok) {
-          throw new Error(`MCP Backend returned status ${response.status}`);
-        }
-
-        const result = await response.json();
-        const rawSequence = result.data.workspace3; // Array: ["D", "A", "C", "B"]
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ sequence: rawSequence })
-            }
-          ]
-        };
-      } catch (err) {
-        console.error("[MCP APP] Error fetching raw sequence:", err.message);
-        return {
-          isError: true,
-          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
-        };
-      }
-    }
-  );
-
-  // -------------------------------------------------------------------------
-  // Workspace 3 Tool - FORMATTED / PROMPTED
+  // WORKSPACE 3 - NUDGED FORMATTED DIAGRAM
   // -------------------------------------------------------------------------
   server.tool(
     "get_workspace3_formatted",
-    "Fetches Workspace 3 sequence data formatted with instructions to render a transition diagram/plot.",
+    "Requests a rendered flow/transition diagram for Workspace 3.",
     {},
     async () => {
       try {
-        const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
-          headers: { Authorization: authToken }
-        });
-
-        if (!response.ok) {
-          throw new Error(`MCP Backend returned status ${response.status}`);
-        }
-
-        const result = await response.json();
-        const sequence = result.data.workspace3; // Array: ["D", "A", "C", "B"]
-        const transitionText = sequence.join(" -> ");
+        const data = await fetchCustomerData();
+        const sequence = data.workspace3; // ["D", "A", "C", "B"]
 
         return {
           content: [
             {
               type: "text",
-              text: `Transition Sequence Data: ${transitionText}\n\nInstruction: Please visualize this sequence for the user as a state transition diagram or flowchart (e.g., using Mermaid syntax, ASCII art, or a step-by-step visual sequence).`
+              text: `Data Sequence: ${JSON.stringify(sequence)}\n\n` +
+                    `CRITICAL VISUALIZATION INSTRUCTION:\n` +
+                    `Do NOT output plain text like "D -> A -> C -> B".\n` +
+                    `You MUST output a syntactically complete Mermaid.js graph code block so the UI renders a graphical diagram card, OR render an ASCII graph using box-drawing characters like this:\n\n` +
+                    `\`\`\`mermaid\n` +
+                    `graph LR\n` +
+                    `    D[State D] --> A[State A]\n` +
+                    `    A --> C[State C]\n` +
+                    `    C --> B[State B]\n` +
+                    `\`\`\``
             }
           ]
         };
       } catch (err) {
-        console.error("[MCP APP] Error fetching formatted sequence:", err.message);
+        return { isError: true, content: [{ type: "text", text: err.message }] };
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // WORKSPACE 2 - TOOL 1: RAW
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_workspace2_raw",
+    "Fetches raw key-value pair metrics for Workspace 2.",
+    {},
+    async () => {
+      try {
+        const data = await fetchCustomerData();
         return {
-          isError: true,
-          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
+          content: [{ type: "text", text: JSON.stringify({ metrics: data.workspace2 }) }]
         };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: err.message }] };
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // WORKSPACE 2 - TOOL 2: FORMATTED BAR CHART PROMPT
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_workspace2_formatted",
+    "Fetches Workspace 2 data with explicit instructions for the LLM to render a bar chart.",
+    {},
+    async () => {
+      try {
+        const data = await fetchCustomerData();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Bar Chart Data: ${JSON.stringify(data.workspace2)}\n\n` +
+                    `INSTRUCTION: Please display this data as a visual Bar Chart for the user. ` +
+                    `You can render it using an ASCII bar chart or a formatted Markdown table with bar indicators (e.g. █ blocks).`
+            }
+          ]
+        };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: err.message }] };
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // WORKSPACE 2 - TOOL 3: IFRAME / EXTERNAL HOSTED WIDGET
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_workspace2_widget",
+    "Renders an interactive embedded iframe chart hosted directly on the application backend.",
+    {},
+    async () => {
+      try {
+        const widgetUrl = `${CUSTOMER_BACKEND_URL}/widget/bar-chart`;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Below is the embedded visual chart hosted on the customer backend:\n\n` +
+                    `<iframe src="${widgetUrl}" width="100%" height="220" style="border:none; border-radius:8px;"></iframe>\n\n` +
+                    `Direct Link: ${widgetUrl}`
+            }
+          ]
+        };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: err.message }] };
       }
     }
   );
