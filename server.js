@@ -58,8 +58,144 @@ function createMcpServer(authToken) {
   };
 
   // -------------------------------------------------------------------------
-  // WORKSPACE 3 - NUDGED FORMATTED DIAGRAM
+  // WORKSPACE 1 TOOLS
   // -------------------------------------------------------------------------
+  server.tool(
+    "get_workspace1",
+    "Fetches workspace 1 sprint metrics from the customer account.",
+    {},
+    async () => {
+      try {
+        const data = await fetchCustomerData();
+        const ws1 = data.workspace1;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Active Sprint: ${ws1.completedTasks} completed tasks, ${ws1.inProgressTasks} in progress`
+            }
+          ]
+        };
+      } catch (err) {
+        console.error("[MCP APP] Error querying MCP Backend:", err.message);
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
+        };
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // WORKSPACE 2 TOOLS
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_workspace2_raw",
+    "Fetches raw key-value pair metrics for Workspace 2.",
+    {},
+    async () => {
+      try {
+        const data = await fetchCustomerData();
+        return {
+          content: [{ type: "text", text: JSON.stringify({ metrics: data.workspace2 }) }]
+        };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: err.message }] };
+      }
+    }
+  );
+
+  server.tool(
+    "get_workspace2_formatted",
+    "Fetches Workspace 2 data formatted as a graphical bar chart.",
+    {},
+    async () => {
+      try {
+        const data = await fetchCustomerData(); // { A: 5, B: 7, C: 3 }
+        const labels = Object.keys(data.workspace2).map(k => `"${k}"`).join(", ");
+        const values = Object.values(data.workspace2).join(", ");
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Data: ${JSON.stringify(data.workspace2)}\n\n` +
+                    `CRITICAL VISUALIZATION INSTRUCTION:\n` +
+                    `Do NOT output ASCII text or bullet points.\n` +
+                    `You MUST output a syntactically valid Mermaid.js xychart block so the UI renders an actual graphical plot card:\n\n` +
+                    `\`\`\`mermaid\n` +
+                    `xychart-beta\n` +
+                    `    title "Workspace 2 Metrics"\n` +
+                    `    x-axis [${labels}]\n` +
+                    `    y-axis "Values" 0 --> 10\n` +
+                    `    bar [${values}]\n` +
+                    `\`\`\``
+            }
+          ]
+        };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: err.message }] };
+      }
+    }
+  );
+
+  server.tool(
+    "get_workspace2_widget",
+    "Renders an external hosted widget for Workspace 2.",
+    {},
+    async () => {
+      try {
+        const widgetUrl = `${CUSTOMER_BACKEND_URL}/widget/bar-chart`;
+        // QuickChart generates an actual rendered PNG image on the fly for hosts that block iframes
+        const chartImageUrl = `https://quickchart.io/chart?c={type:'bar',data:{labels:['A','B','C'],datasets:[{label:'Metrics',data:[5,7,3]}]}}`;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Here is the visual chart widget for Workspace 2:\n\n` +
+                    `![Workspace 2 Bar Chart](${chartImageUrl})\n\n` +
+                    `🔗 [Open Live Interactive Widget Dashboard](${widgetUrl})`
+            }
+          ]
+        };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text", text: err.message }] };
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // WORKSPACE 3 TOOLS
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_workspace3_raw",
+    "Fetches the raw transition sequence array from Workspace 3.",
+    {},
+    async () => {
+      try {
+        const data = await fetchCustomerData();
+        const rawSequence = data.workspace3; // Array: ["D", "A", "C", "B"]
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ sequence: rawSequence })
+            }
+          ]
+        };
+      } catch (err) {
+        console.error("[MCP APP] Error fetching raw sequence:", err.message);
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
+        };
+      }
+    }
+  );
+
   server.tool(
     "get_workspace3_formatted",
     "Requests a rendered flow/transition diagram for Workspace 3.",
@@ -83,78 +219,6 @@ function createMcpServer(authToken) {
                     `    A --> C[State C]\n` +
                     `    C --> B[State B]\n` +
                     `\`\`\``
-            }
-          ]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
-      }
-    }
-  );
-
-  // -------------------------------------------------------------------------
-  // WORKSPACE 2 - TOOL 1: RAW
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace2_raw",
-    "Fetches raw key-value pair metrics for Workspace 2.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        return {
-          content: [{ type: "text", text: JSON.stringify({ metrics: data.workspace2 }) }]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
-      }
-    }
-  );
-
-  // -------------------------------------------------------------------------
-  // WORKSPACE 2 - TOOL 2: FORMATTED BAR CHART PROMPT
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace2_formatted",
-    "Fetches Workspace 2 data with explicit instructions for the LLM to render a bar chart.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Bar Chart Data: ${JSON.stringify(data.workspace2)}\n\n` +
-                    `INSTRUCTION: Please display this data as a visual Bar Chart for the user. ` +
-                    `You can render it using an ASCII bar chart or a formatted Markdown table with bar indicators (e.g. █ blocks).`
-            }
-          ]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
-      }
-    }
-  );
-
-  // -------------------------------------------------------------------------
-  // WORKSPACE 2 - TOOL 3: IFRAME / EXTERNAL HOSTED WIDGET
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace2_widget",
-    "Renders an interactive embedded iframe chart hosted directly on the application backend.",
-    {},
-    async () => {
-      try {
-        const widgetUrl = `${CUSTOMER_BACKEND_URL}/widget/bar-chart`;
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Below is the embedded visual chart hosted on the customer backend:\n\n` +
-                    `<iframe src="${widgetUrl}" width="100%" height="220" style="border:none; border-radius:8px;"></iframe>\n\n` +
-                    `Direct Link: ${widgetUrl}`
             }
           ]
         };
