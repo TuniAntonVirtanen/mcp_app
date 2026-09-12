@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { AsyncLocalStorage } from "async_hooks";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
@@ -23,6 +24,9 @@ const MCP_BACKEND_URL = process.env.MCP_BACKEND_URL || "https://prototype-mcp-ba
 
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
+// AsyncLocalStorage propagates request context (Auth Header) into tool handler calls asynchronously
+const requestContext = new AsyncLocalStorage();
+
 const validateAuthHeader = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
@@ -41,170 +45,183 @@ const validateAuthHeader = (req, res, next) => {
   next();
 };
 
-function createMcpServer(authToken) {
-  const server = new McpServer({
-    name: "customer-mcp-app",
-    version: "2.0.0"
+// Helper for tool execution to fetch data using active context token
+const fetchCustomerData = async () => {
+  const store = requestContext.getStore();
+  const authToken = store?.authToken;
+
+  if (!authToken) {
+    throw new Error("Missing authentication context for tool execution.");
+  }
+
+  const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
+    headers: { Authorization: authToken }
   });
 
-  const fetchCustomerData = async () => {
-    const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
-      headers: { Authorization: authToken }
-    });
-    if (!response.ok) throw new Error(`MCP Backend status ${response.status}`);
-    const result = await response.json();
-    return result.data;
-  };
+  if (!response.ok) throw new Error(`MCP Backend status ${response.status}`);
+  const result = await response.json();
+  return result.data;
+};
 
-  // -------------------------------------------------------------------------
-  // WORKSPACE 1 TOOLS
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace1",
-    "Fetches workspace 1 sprint metrics from the customer account.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        const ws1 = data.workspace1;
+// Application-scoped MCP server instance
+const server = new McpServer({
+  name: "customer-mcp-app",
+  version: "2.0.0"
+});
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Active Sprint: ${ws1.completedTasks} completed tasks, ${ws1.inProgressTasks} in progress`
-            }
-          ]
-        };
-      } catch (err) {
-        console.error("[MCP APP] Error querying MCP Backend:", err.message);
-        return {
-          isError: true,
-          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
-        };
-      }
+// -------------------------------------------------------------------------
+// WORKSPACE 1 TOOLS
+// -------------------------------------------------------------------------
+server.tool(
+  "get_workspace1",
+  "Fetches workspace 1 sprint metrics from the customer account.",
+  {},
+  async () => {
+    try {
+      const data = await fetchCustomerData();
+      const ws1 = data.workspace1;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Active Sprint: ${ws1.completedTasks} completed tasks, ${ws1.inProgressTasks} in progress`
+          }
+        ]
+      };
+    } catch (err) {
+      console.error("[MCP APP] Error querying MCP Backend:", err.message);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error processing request: ${err.message}` }]
+      };
     }
-  );
+  }
+);
 
-  // -------------------------------------------------------------------------
-  // WORKSPACE 2 TOOLS
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace2_raw",
-    "Fetches raw key-value pair metrics for Workspace 2.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        return {
-          content: [{ type: "text", text: JSON.stringify({ metrics: data.workspace2 }) }]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
-      }
+// -------------------------------------------------------------------------
+// WORKSPACE 2 TOOLS
+// -------------------------------------------------------------------------
+server.tool(
+  "get_workspace2_raw",
+  "Fetches raw key-value pair metrics for Workspace 2.",
+  {},
+  async () => {
+    try {
+      const data = await fetchCustomerData();
+      return {
+        content: [{ type: "text", text: JSON.stringify({ metrics: data.workspace2 }) }]
+      };
+    } catch (err) {
+      return { isError: true, content: [{ type: "text", text: err.message }] };
     }
-  );
+  }
+);
 
-  server.tool(
-    "get_workspace2_formatted",
-    "Fetches Workspace 2 data formatted as a graphical bar chart.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        const labels = Object.keys(data.workspace2).map(k => `"${k}"`).join(", ");
-        const values = Object.values(data.workspace2).join(", ");
+server.tool(
+  "get_workspace2_formatted",
+  "Fetches Workspace 2 data formatted as a graphical bar chart.",
+  {},
+  async () => {
+    try {
+      const data = await fetchCustomerData();
+      const labels = Object.keys(data.workspace2).map(k => `"${k}"`).join(", ");
+      const values = Object.values(data.workspace2).join(", ");
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Data: ${JSON.stringify(data.workspace2)}\n\n` +
-                    `CRITICAL VISUALIZATION INSTRUCTION:\n` +
-                    `Do NOT output ASCII text or bullet points.\n` +
-                    `You MUST output a syntactically valid Mermaid.js xychart block so the UI renders an actual graphical plot card:\n\n` +
-                    `\`\`\`mermaid\n` +
-                    `xychart-beta\n` +
-                    `    title "Workspace 2 Metrics"\n` +
-                    `    x-axis [${labels}]\n` +
-                    `    y-axis "Values" 0 --> 10\n` +
-                    `    bar [${values}]\n` +
-                    `\`\`\``
-            }
-          ]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
-      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Data: ${JSON.stringify(data.workspace2)}\n\n` +
+                  `CRITICAL VISUALIZATION INSTRUCTION:\n` +
+                  `Do NOT output ASCII text or bullet points.\n` +
+                  `You MUST output a syntactically valid Mermaid.js xychart block so the UI renders an actual graphical plot card:\n\n` +
+                  `\`\`\`mermaid\n` +
+                  `xychart-beta\n` +
+                  `    title "Workspace 2 Metrics"\n` +
+                  `    x-axis [${labels}]\n` +
+                  `    y-axis "Values" 0 --> 10\n` +
+                  `    bar [${values}]\n` +
+                  `\`\`\``
+          }
+        ]
+      };
+    } catch (err) {
+      return { isError: true, content: [{ type: "text", text: err.message }] };
     }
-  );
+  }
+);
 
-  // -------------------------------------------------------------------------
-  // WORKSPACE 3 TOOLS
-  // -------------------------------------------------------------------------
-  server.tool(
-    "get_workspace3_raw",
-    "Fetches raw edge-pair transitions representing a graph from Workspace 3.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        const rawEdges = data.workspace3;
+// -------------------------------------------------------------------------
+// WORKSPACE 3 TOOLS
+// -------------------------------------------------------------------------
+server.tool(
+  "get_workspace3_raw",
+  "Fetches raw edge-pair transitions representing a graph from Workspace 3.",
+  {},
+  async () => {
+    try {
+      const data = await fetchCustomerData();
+      const rawEdges = data.workspace3;
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ edges: rawEdges })
-            }
-          ]
-        };
-      } catch (err) {
-        console.error("[MCP APP] Error fetching raw edges:", err.message);
-        return {
-          isError: true,
-          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
-        };
-      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ edges: rawEdges })
+          }
+        ]
+      };
+    } catch (err) {
+      console.error("[MCP APP] Error fetching raw edges:", err.message);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error processing request: ${err.message}` }]
+      };
     }
-  );
+  }
+);
 
-  server.tool(
-    "get_workspace3_formatted",
-    "Requests a rendered flow/transition graph diagram for Workspace 3.",
-    {},
-    async () => {
-      try {
-        const data = await fetchCustomerData();
-        const edges = data.workspace3;
+server.tool(
+  "get_workspace3_formatted",
+  "Requests a rendered flow/transition graph diagram for Workspace 3.",
+  {},
+  async () => {
+    try {
+      const data = await fetchCustomerData();
+      const edges = data.workspace3;
 
-        const mermaidEdges = edges
-          .map(([from, to]) => `    ${from} --> ${to}`)
-          .join("\n");
+      const mermaidEdges = edges
+        .map(([from, to]) => `    ${from} --> ${to}`)
+        .join("\n");
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Data Edges: ${JSON.stringify(edges)}\n\n` +
-                    `CRITICAL VISUALIZATION INSTRUCTION:\n` +
-                    `Do NOT output plain text lists.\n` +
-                    `You MUST output a syntactically complete Mermaid.js graph code block so the UI renders a graphical diagram card:\n\n` +
-                    `\`\`\`mermaid\n` +
-                    `graph LR\n` +
-                    `${mermaidEdges}\n` +
-                    `\`\`\``
-            }
-          ]
-        };
-      } catch (err) {
-        return { isError: true, content: [{ type: "text", text: err.message }] };
-      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Data Edges: ${JSON.stringify(edges)}\n\n` +
+                  `CRITICAL VISUALIZATION INSTRUCTION:\n` +
+                  `Do NOT output plain text lists.\n` +
+                  `You MUST output a syntactically complete Mermaid.js graph code block so the UI renders a graphical diagram card:\n\n` +
+                  `\`\`\`mermaid\n` +
+                  `graph LR\n` +
+                  `${mermaidEdges}\n` +
+                  `\`\`\``
+          }
+        ]
+      };
+    } catch (err) {
+      return { isError: true, content: [{ type: "text", text: err.message }] };
     }
-  );
+  }
+);
 
-  return server;
-}
+// Bind MCP HTTP Transport globally
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: undefined
+});
+
+await server.connect(transport);
 
 const sendProtectedResourceMetadata = (req, res) => {
   const host = getHostUrl(req);
@@ -222,18 +239,11 @@ app.get("/.well-known/oauth-protected-resource/mcp", sendProtectedResourceMetada
 app.use("/mcp", express.json(), validateAuthHeader, async (req, res) => {
   try {
     const authToken = req.headers.authorization;
-    const server = createMcpServer(authToken);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined
-    });
 
-    res.on("close", () => {
-      transport.close();
-      server.close();
+    // Execute the request inside an AsyncLocalStorage context so tool calls can access authToken
+    await requestContext.run({ authToken }, async () => {
+      await transport.handleRequest(req, res, req.body);
     });
-
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
   } catch (err) {
     console.error("[MCP APP] Error during protocol handling:", err);
     if (!res.headersSent) res.status(500).json({ error: "internal_error" });
