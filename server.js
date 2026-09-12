@@ -13,26 +13,26 @@ app.use(
   })
 );
 
-// Logger
+// Logging
 app.use((req, res, next) => {
-  console.log(`[MCP REQ] ${req.method} ${req.url}`);
+  console.log(`[MCP APP REQ] ${req.method} ${req.url}`);
   next();
 });
 
-const AUTH_SERVER_URL = "https://customer-backend-stqk.onrender.com";
-const EXPECTED_TOKEN = "mock_access_token_9999";
+// Environment Configuration
+const CUSTOMER_BACKEND_URL = process.env.CUSTOMER_BACKEND_URL || "https://customer-backend-stqk.onrender.com";
+const MCP_BACKEND_URL = process.env.MCP_BACKEND_URL || "https://mcp-backend-service.onrender.com";
+
 const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 
 // ---------------------------------------------------------------------------
-// AUTH MIDDLEWARE (defined before use)
+// AUTHENTICATION GUARD
 // ---------------------------------------------------------------------------
-const validateAuth = (req, res, next) => {
+const validateAuthHeader = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
-  console.log("[AUTH CHECK] header received:", authHeader);
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    console.log("[AUTH CHECK] missing/malformed header -> 401");
     res.set(
       "WWW-Authenticate",
       `Bearer realm="mcp", resource_metadata="${host}/.well-known/oauth-protected-resource"`
@@ -43,51 +43,59 @@ const validateAuth = (req, res, next) => {
       id: null
     });
   }
-
-  const token = authHeader.split(" ")[1];
-  console.log("[AUTH CHECK] token:", token, "expected:", EXPECTED_TOKEN, "match:", token === EXPECTED_TOKEN);
-  if (token !== EXPECTED_TOKEN) {
-    console.log("[AUTH CHECK] token mismatch -> 403");
-    return res.status(403).json({ error: "invalid_token" });
-  }
-
   next();
 };
 
 // ---------------------------------------------------------------------------
-// MCP SERVER FACTORY (new instance per request — required for stateless mode)
+// MCP SERVER FACTORY (Stateless transport delegation)
 // ---------------------------------------------------------------------------
-function getServer() {
+function createMcpServer(authToken) {
   const server = new McpServer({
-    name: "customer-mcp-middleman",
-    version: "1.0.0"
+    name: "customer-mcp-app",
+    version: "2.0.0"
   });
 
   server.tool(
     "get_customer_projects",
-    "Fetches project metrics from the authenticated Customer account.",
+    "Fetches project metrics from the authenticated Customer account via MCP Backend.",
     {},
-    async () => ({
-      content: [
-        {
-          type: "text",
-          text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
+    async () => {
+      try {
+        // Delegate actual logic and downstream calls to MCP Backend
+        const response = await fetch(`${MCP_BACKEND_URL}/api/v1/projects`, {
+          headers: { Authorization: authToken }
+        });
+
+        if (!response.ok) {
+          throw new Error(`MCP Backend returned status ${response.status}`);
         }
-      ]
-    })
+
+        const data = await response.json();
+        return {
+          content: [{ type: "text", text: data.summary }]
+        };
+      } catch (err) {
+        console.error("[MCP APP] Failed to query MCP Backend:", err.message);
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Error processing request: ${err.message}` }]
+        };
+      }
+    }
   );
 
   return server;
 }
 
 // ---------------------------------------------------------------------------
-// DISCOVERY ENDPOINTS
+// OAUTH DISCOVERY ENDPOINTS
+// Pointing authorization directly to Customer Backend
 // ---------------------------------------------------------------------------
 const sendProtectedResourceMetadata = (req, res) => {
   const host = getHostUrl(req);
   res.json({
     resource: `${host}/mcp`,
-    authorization_servers: [AUTH_SERVER_URL],
+    authorization_servers: [CUSTOMER_BACKEND_URL],
     scopes_supported: ["read", "write"],
     bearer_methods_supported: ["header"]
   });
@@ -98,9 +106,9 @@ app.get("/.well-known/oauth-protected-resource/mcp", sendProtectedResourceMetada
 
 app.get("/.well-known/oauth-authorization-server", (req, res) => {
   res.json({
-    issuer: AUTH_SERVER_URL,
-    authorization_endpoint: `${AUTH_SERVER_URL}/oauth/authorize`,
-    token_endpoint: `${AUTH_SERVER_URL}/oauth/token`,
+    issuer: CUSTOMER_BACKEND_URL,
+    authorization_endpoint: `${CUSTOMER_BACKEND_URL}/oauth/authorize`,
+    token_endpoint: `${CUSTOMER_BACKEND_URL}/oauth/token`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code"],
     code_challenge_methods_supported: ["S256"],
@@ -114,15 +122,12 @@ app.get("/.well-known/openid-configuration", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// MCP PROTOCOL ROUTE (the only one — new server + transport per request)
+// ROUTE ROUTER
 // ---------------------------------------------------------------------------
-app.use("/mcp", express.json(), validateAuth, async (req, res) => {
-  console.log("[MCP] Authorization header:", req.headers.authorization);
-  console.log("[MCP] Accept header:", req.headers.accept);
-  console.log("[MCP] Body:", JSON.stringify(req.body));
-
+app.use("/mcp", express.json(), validateAuthHeader, async (req, res) => {
   try {
-    const server = getServer();
+    const authToken = req.headers.authorization;
+    const server = createMcpServer(authToken);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined
     });
@@ -134,61 +139,11 @@ app.use("/mcp", express.json(), validateAuth, async (req, res) => {
 
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
-
-    console.log("[MCP] handleRequest completed, status:", res.statusCode);
   } catch (err) {
-    console.error("[MCP] handleRequest threw:", err);
+    console.error("[MCP APP] Error during protocol handling:", err);
     if (!res.headersSent) res.status(500).json({ error: "internal_error" });
   }
 });
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`MCP App listening on port ${port}`));
-
-
-/*
-  Deprecated
-
-  // Create a single persistent MCP server and transport instance
-const mcpServer = new McpServer({
-  name: "customer-mcp-middleman",
-  version: "1.0.0"
-});
-
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: undefined // stateless mode: no session tracking needed
-});
-await mcpServer.connect(transport);
-
-mcpServer.tool(
-  "get_customer_projects",
-  "Fetches project metrics from the authenticated Customer account.",
-  {},
-  async () => ({
-    content: [
-      {
-        type: "text",
-        text: `🎉 Successfully retrieved Customer Data for user "user"! Active Sprint: 12 completed tasks, 3 in progress.`
-      }
-    ]
-  })
-);
-
-
-// ---------------------------------------------------------------------------
-// MCP PROTOCOL ROUTE
-// ---------------------------------------------------------------------------
-// Allow express.json() ONLY on non-MCP routes, or bypass it for transport
-app.use("/mcp", express.json(), validateAuth, async (req, res) => {
-  console.log("[MCP] Authorization header:", req.headers.authorization);
-  console.log("[MCP] Accept header:", req.headers.accept);
-  console.log("[MCP] Body:", JSON.stringify(req.body));
-  try {
-    await transport.handleRequest(req, res, req.body);
-    console.log("[MCP] handleRequest completed, status:", res.statusCode);
-  } catch (err) {
-    console.error("[MCP] handleRequest threw:", err);
-    if (!res.headersSent) res.status(500).json({ error: "internal_error" });
-  }
-});
-*/
+app.listen(port, () => console.log(`MCP App running on port ${port}`));
