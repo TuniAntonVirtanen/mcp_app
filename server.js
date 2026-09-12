@@ -41,6 +41,12 @@ const validateAuthHeader = (req, res, next) => {
   next();
 };
 
+async function fetchImageAsBase64(url) {
+  const response = await fetch(url);
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer).toString("base64");
+}
+
 function createMcpServer(authToken) {
   const server = new McpServer({
     name: "customer-mcp-app",
@@ -284,6 +290,7 @@ app.use("/mcp", express.json(), validateAuthHeader, async (req, res) => {
     if (!res.headersSent) res.status(500).json({ error: "internal_error" });
   }
 });
+
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`MCP App running on port ${port}`));
