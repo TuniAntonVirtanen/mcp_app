@@ -50,8 +50,10 @@ await mcpServer.connect(transport);
 const validateAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
+  console.log("[AUTH CHECK] header received:", authHeader);
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    console.log("[AUTH CHECK] missing/malformed header -> 401");
     res.set(
       "WWW-Authenticate",
       `Bearer realm="mcp", resource_metadata="${host}/.well-known/oauth-protected-resource"`
@@ -64,7 +66,9 @@ const validateAuth = (req, res, next) => {
   }
 
   const token = authHeader.split(" ")[1];
+  console.log("[AUTH CHECK] token:", token, "expected:", EXPECTED_TOKEN, "match:", token === EXPECTED_TOKEN);
   if (token !== EXPECTED_TOKEN) {
+    console.log("[AUTH CHECK] token mismatch -> 403");
     return res.status(403).json({ error: "invalid_token" });
   }
 
