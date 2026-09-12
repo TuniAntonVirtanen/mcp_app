@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import { AsyncLocalStorage } from "async_hooks";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -27,7 +29,32 @@ const getHostUrl = (req) => `${req.protocol}://${req.get("host")}`;
 // AsyncLocalStorage propagates request context (Auth Header) into tool handler calls asynchronously
 const requestContext = new AsyncLocalStorage();
 
-const validateAuthHeader = (req, res, next) => {
+// ---------------------------------------------------------------------------
+// Token verification (JWKS-backed RS256). Previously this middleware only
+// checked that an Authorization: Bearer header was present, and fully
+// deferred trust to mcp-backend. As the service that actually publishes
+// /.well-known/oauth-protected-resource, mcp-app is the OAuth resource
+// server for this MCP endpoint, so it now verifies the signature, expiry,
+// and audience itself instead of passing an unverified token onward.
+// ---------------------------------------------------------------------------
+let cachedPemPublicKey = null;
+
+async function getPublicKeyFromJWKS() {
+  if (cachedPemPublicKey) return cachedPemPublicKey;
+
+  const resKey = await fetch(`${CUSTOMER_BACKEND_URL}/.well-known/jwks.json`);
+  if (!resKey.ok) throw new Error(`Failed to fetch JWKS: ${resKey.status}`);
+
+  const jwks = await resKey.json();
+  const jwk = jwks.keys && jwks.keys[0];
+  if (!jwk) throw new Error("No public key found in JWKS");
+
+  const keyObject = crypto.createPublicKey({ key: jwk, format: "jwk" });
+  cachedPemPublicKey = keyObject.export({ type: "spki", format: "pem" });
+  return cachedPemPublicKey;
+}
+
+const validateAuthHeader = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   const host = getHostUrl(req);
 
@@ -42,7 +69,38 @@ const validateAuthHeader = (req, res, next) => {
       id: null
     });
   }
-  next();
+
+  const token = authHeader.slice("Bearer ".length);
+
+  // This is the same resource identifier advertised in
+  // /.well-known/oauth-protected-resource below, and the value a
+  // well-behaved client passes as `resource` when it requests
+  // authorization. A token not issued for this exact resource is rejected,
+  // even if it is validly signed by the trusted authorization server.
+  const resourceUri = `${host}/mcp`;
+
+  try {
+    const publicKey = await getPublicKeyFromJWKS();
+    const verifiedPayload = jwt.verify(token, publicKey, {
+      algorithms: ["RS256"],
+      audience: resourceUri
+    });
+    req.authTokenPayload = verifiedPayload;
+    next();
+  } catch (err) {
+    console.error("[MCP APP AUTH ERROR]", err.message);
+    // Invalidate cached key if verification fails to allow key rotation recovery
+    cachedPemPublicKey = null;
+    res.set(
+      "WWW-Authenticate",
+      `Bearer realm="mcp", resource_metadata="${host}/.well-known/oauth-protected-resource", error="invalid_token"`
+    );
+    return res.status(401).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: `Token verification failed: ${err.message}` },
+      id: null
+    });
+  }
 };
 
 // Helper for tool execution to fetch data using active context token
