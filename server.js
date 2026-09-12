@@ -146,23 +146,23 @@ function createMcpServer(authToken) {
   // -------------------------------------------------------------------------
   server.tool(
     "get_workspace3_raw",
-    "Fetches the raw transition sequence array from Workspace 3.",
+    "Fetches raw edge-pair transitions representing a graph from Workspace 3.",
     {},
     async () => {
       try {
         const data = await fetchCustomerData();
-        const rawSequence = data.workspace3; // Array: ["D", "A", "C", "B"]
+        const rawEdges = data.workspace3; // [["D","A"], ["A","C"], ...]
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ sequence: rawSequence })
+              text: JSON.stringify({ edges: rawEdges })
             }
           ]
         };
       } catch (err) {
-        console.error("[MCP APP] Error fetching raw sequence:", err.message);
+        console.error("[MCP APP] Error fetching raw edges:", err.message);
         return {
           isError: true,
           content: [{ type: "text", text: `Error processing request: ${err.message}` }]
@@ -173,26 +173,29 @@ function createMcpServer(authToken) {
 
   server.tool(
     "get_workspace3_formatted",
-    "Requests a rendered flow/transition diagram for Workspace 3.",
+    "Requests a rendered flow/transition graph diagram for Workspace 3.",
     {},
     async () => {
       try {
         const data = await fetchCustomerData();
-        const sequence = data.workspace3; // ["D", "A", "C", "B"]
+        const edges = data.workspace3; // [["D","A"], ["A","C"], ["B","C"], ["D","C"]]
+
+        // Dynamically map edge pairs to Mermaid syntax: "    D --> A\n    A --> C"
+        const mermaidEdges = edges
+          .map(([from, to]) => `    ${from} --> ${to}`)
+          .join("\n");
 
         return {
           content: [
             {
               type: "text",
-              text: `Data Sequence: ${JSON.stringify(sequence)}\n\n` +
+              text: `Data Edges: ${JSON.stringify(edges)}\n\n` +
                     `CRITICAL VISUALIZATION INSTRUCTION:\n` +
-                    `Do NOT output plain text like "D -> A -> C -> B".\n` +
-                    `You MUST output a syntactically complete Mermaid.js graph code block so the UI renders a graphical diagram card, OR render an ASCII graph using box-drawing characters like this:\n\n` +
+                    `Do NOT output plain text lists.\n` +
+                    `You MUST output a syntactically complete Mermaid.js graph code block so the UI renders a graphical diagram card:\n\n` +
                     `\`\`\`mermaid\n` +
                     `graph LR\n` +
-                    `    D[State D] --> A[State A]\n` +
-                    `    A --> C[State C]\n` +
-                    `    C --> B[State B]\n` +
+                    `${mermaidEdges}\n` +
                     `\`\`\``
             }
           ]
