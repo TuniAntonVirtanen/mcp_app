@@ -1,3 +1,4 @@
+// MCP app
 import express from "express";
 import cors from "cors";
 import crypto from "crypto";
